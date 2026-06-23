@@ -1038,6 +1038,7 @@ class GameEngine {
         x: target.x,
         y: target.y,
         delay: cfg.delay,
+        maxDelay: cfg.delay,
         radius: cfg.radius,
         damage: cfg.damage,
         owner: ownerId,
@@ -1139,7 +1140,27 @@ class GameEngine {
         break;
 
       case 'explosion_impact':
-        this.fx.spawnFireExplosion(data.x, data.y);
+        // Element-aware impact effects based on projectile color
+        if (data.color === '#ff4500' || data.color === '#ff7700' || data.color === '#ff3300' || data.color === '#e62e00') {
+          this.fx.spawnFireExplosion(data.x, data.y);
+        } else if (data.color === '#aaddff' || data.color === '#00ccff' || data.color === '#00aaff' || data.color === '#ffffff') {
+          this.fx.spawnIceShatter(data.x, data.y);
+        } else if (data.color === '#ffe600' || data.color === '#ffffaa' || data.color === '#ffd700') {
+          this.fx.spawnLightningStrike(data.x, 0, data.y);
+          this.activeBolts.push({
+            x: data.x, startY: 0, endY: data.y, life: 15,
+            segments: this.generateJaggedPath(data.x, 0, data.y, 10)
+          });
+          this.sound.playLightning();
+        } else if (data.color === '#8b5a2b' || data.color === '#6e473b' || data.color === '#5c4033' || data.color === '#9c6644') {
+          this.fx.spawnEarthShatter(data.x, data.y);
+        } else if (data.color === '#00bfff' || data.color === '#3399ff' || data.color === '#0055ff' || data.color === '#0044cc') {
+          this.fx.spawnWaterGeyser(data.x, data.y);
+        } else if (data.color === '#e0e0e0' || data.color === '#f0f0f0' || data.color === '#d8d8d8' || data.color === '#c0c0c0') {
+          this.fx.spawnWindVortex(data.x, data.y);
+        } else {
+          this.fx.spawnFireExplosion(data.x, data.y);
+        }
         break;
       case 'shield_activate':
         this.fx.spawnText(
@@ -1156,7 +1177,6 @@ class GameEngine {
         break;
       case 'lightning_impact':
         this.fx.spawnLightningStrike(data.x, 0, data.y);
-        this.fx.spawnIceShatter(data.x, data.y);
         this.sound.playLightning();
         
         // Push visual bolt to list
@@ -1319,8 +1339,8 @@ class GameEngine {
 
       // Arena boundary collision
       if (proj.x < this.bounds.xMin || proj.x > this.bounds.xMax || proj.y < this.bounds.yMin || proj.y > this.bounds.yMax) {
-        this.triggerSyncedEvent('explosion_impact', { x: proj.x, y: proj.y });
-        if (!this.isBotMode) this.broadcastEvent('explosion_impact', { x: proj.x, y: proj.y });
+        this.triggerSyncedEvent('explosion_impact', { x: proj.x, y: proj.y, color: proj.color });
+        if (!this.isBotMode) this.broadcastEvent('explosion_impact', { x: proj.x, y: proj.y, color: proj.color });
         this.projectiles.splice(i, 1);
         continue;
       }
@@ -1335,8 +1355,8 @@ class GameEngine {
         }
       }
       if (hitBlock) {
-        this.triggerSyncedEvent('explosion_impact', { x: proj.x, y: proj.y });
-        if (!this.isBotMode) this.broadcastEvent('explosion_impact', { x: proj.x, y: proj.y });
+        this.triggerSyncedEvent('explosion_impact', { x: proj.x, y: proj.y, color: proj.color });
+        if (!this.isBotMode) this.broadcastEvent('explosion_impact', { x: proj.x, y: proj.y, color: proj.color });
         this.projectiles.splice(i, 1);
         continue;
       }
@@ -1380,8 +1400,8 @@ class GameEngine {
           this.fx.spawnText(wiz.x, wiz.y - 20, `-${Math.round(dmg)}`, '#ff3b30', 16, 'bold');
         }
 
-        this.triggerSyncedEvent('explosion_impact', { x: proj.x, y: proj.y });
-        if (!this.isBotMode) this.broadcastEvent('explosion_impact', { x: proj.x, y: proj.y });
+        this.triggerSyncedEvent('explosion_impact', { x: proj.x, y: proj.y, color: proj.color });
+        if (!this.isBotMode) this.broadcastEvent('explosion_impact', { x: proj.x, y: proj.y, color: proj.color });
         
         this.projectiles.splice(i, 1);
         
@@ -1531,14 +1551,18 @@ class GameEngine {
     const loop = () => {
       if (!window.networkManager.isConnected && !this.isBotMode) return;
 
-      if (window.networkManager.isHost) {
-        this.updatePhysicsAuthoritative();
-      } else {
-        this.updateClientPrediction();
-      }
+      try {
+        if (window.networkManager.isHost) {
+          this.updatePhysicsAuthoritative();
+        } else {
+          this.updateClientPrediction();
+        }
 
-      this.updateVisualEffects();
-      this.drawGame();
+        this.updateVisualEffects();
+        this.drawGame();
+      } catch (err) {
+        console.error('[GameLoop Error]', err);
+      }
 
       requestAnimationFrame(loop);
     };
@@ -1547,31 +1571,65 @@ class GameEngine {
   }
 
   updateVisualEffects() {
+    const P = window.Particle;
     this.projectiles.forEach(p => {
-      if (p.color === '#ff4500') {
+      const c = p.color;
+      // Fire trails
+      if (c === '#ff4500' || c === '#ff7700') {
         this.fx.spawnFireballTrail(p.x, p.y, p.angle);
-      } else if (p.color === '#aaddff' || p.color === '#00bfff' || p.color === '#3399ff' || p.color === '#0055ff') {
-        // Water/Ice blue splash trails
+      }
+      // Fire targeted impacts (magma/meteor) — reddish core glow trail
+      else if (c === '#ff3300' || c === '#e62e00') {
+        if (Math.random() < 0.5) this.fx.particles.push(new P({
+          x: p.x, y: p.y,
+          vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2,
+          color: `hsl(${10 + Math.random() * 20}, 100%, 55%)`,
+          size: 3 + Math.random() * 4, life: 14, drag: 0.93, gravity: 0.04
+        }));
+      }
+      // Ice / Cryo trails
+      else if (c === '#aaddff' || c === '#00ccff' || c === '#00aaff') {
         this.fx.spawnIceTrail(p.x, p.y, p.angle);
-      } else if (p.color === '#ffe600' || p.color === '#ffffaa' || p.color === '#ffd700') {
-        // Lightning spark trail
-        if (Math.random() < 0.5) {
-          this.fx.particles.push(new Particle({
-            x: p.x, y: p.y,
-            vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5,
-            color: '#ffe600', size: 2 + Math.random() * 2, life: 10, drag: 0.9, shape: 'spark'
-          }));
-        }
-      } else {
-        // Earth / Wind greyish white trails
-        if (Math.random() < 0.4) {
-          this.fx.particles.push(new Particle({
-            x: p.x, y: p.y,
-            vx: (Math.random() - 0.5) * 1.2 - Math.cos(p.angle) * 0.5,
-            vy: (Math.random() - 0.5) * 1.2 - Math.sin(p.angle) * 0.5,
-            color: p.color, size: 3 + Math.random() * 3, life: 12, drag: 0.95
-          }));
-        }
+      }
+      // Lightning spark trails
+      else if (c === '#ffe600' || c === '#ffffaa' || c === '#ffd700') {
+        if (Math.random() < 0.55) this.fx.particles.push(new P({
+          x: p.x, y: p.y,
+          vx: (Math.random() - 0.5) * 2.5, vy: (Math.random() - 0.5) * 2.5,
+          color: Math.random() < 0.5 ? '#ffe600' : '#ffffff',
+          size: 2 + Math.random() * 3, life: 10, drag: 0.88, shape: 'spark'
+        }));
+      }
+      // Earth / geo trails (brown rocks)
+      else if (c === '#8b5a2b' || c === '#6e473b' || c === '#5c4033' || c === '#9c6644') {
+        if (Math.random() < 0.4) this.fx.particles.push(new P({
+          x: p.x, y: p.y,
+          vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5,
+          color: c, size: 3 + Math.random() * 3, life: 14, drag: 0.94,
+          gravity: 0.08, shape: 'shard'
+        }));
+      }
+      // Water / Hydro trails
+      else if (c === '#00bfff' || c === '#3399ff' || c === '#0055ff' || c === '#0044cc') {
+        this.fx.spawnIceTrail(p.x, p.y, p.angle); // water uses similar droplet spray
+      }
+      // Wind / Tempest trails (grey-white swirls)
+      else if (c === '#e0e0e0' || c === '#f0f0f0' || c === '#d8d8d8' || c === '#c0c0c0') {
+        if (Math.random() < 0.45) this.fx.particles.push(new P({
+          x: p.x + (Math.random() - 0.5) * 6, y: p.y + (Math.random() - 0.5) * 6,
+          vx: -Math.sin(p.angle) * (0.5 + Math.random()) + (Math.random() - 0.5),
+          vy: Math.cos(p.angle) * (0.5 + Math.random()),
+          color: '#e8e8e8', size: 2 + Math.random() * 3, life: 14, drag: 0.97,
+          gravity: -0.02, shape: 'star'
+        }));
+      }
+      // Fallback
+      else {
+        if (Math.random() < 0.3) this.fx.particles.push(new P({
+          x: p.x, y: p.y,
+          vx: (Math.random() - 0.5) * 1.2, vy: (Math.random() - 0.5) * 1.2,
+          color: c, size: 3 + Math.random() * 3, life: 12, drag: 0.95
+        }));
       }
     });
 
@@ -1760,13 +1818,15 @@ class GameEngine {
     const ctx = this.ctx;
     this.thunderbolts.forEach(bolt => {
       ctx.save();
-      // 36 frames charge
-      const progress = 1 - (bolt.delay / 36);
+      // Use stored maxDelay so animation works for all elements' different delays
+      const maxD = bolt.maxDelay || 36;
+      const progress = Math.max(0, Math.min(1, 1 - (bolt.delay / maxD)));
+      const ringColor = bolt.owner === 'host' ? '#ffe600' : '#ff9900';
       
       ctx.strokeStyle = `rgba(255, 230, 0, ${progress * 0.7})`;
       ctx.lineWidth = 2;
       ctx.shadowBlur = 10;
-      ctx.shadowColor = '#ffe600';
+      ctx.shadowColor = ringColor;
       ctx.beginPath();
       ctx.arc(bolt.x, bolt.y, bolt.radius, 0, Math.PI * 2);
       ctx.stroke();
